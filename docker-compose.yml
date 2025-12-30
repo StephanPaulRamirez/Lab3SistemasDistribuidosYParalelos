@@ -1,0 +1,42 @@
+
+version: "3.9"
+
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "6379:6379"
+
+  publisher:
+    build: ./publisher
+    depends_on:
+      - redis
+
+  validator:
+    build: ./validator
+    depends_on:
+      - redis
+
+  aggregator:
+    build: ./aggregator
+    depends_on:
+      - redis
+
+  audit:
+    build: ./audit
+    volumes:
+      - audit-data:/data
+    depends_on:
+      - redis
+
+  metrics-api:
+    build: ./metrics_api
+    volumes:
+      - audit-data:/data
+    ports:
+      - "8000:8000"
+    depends_on:
+      - audit
+
+volumes:
+  audit-data:

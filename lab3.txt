@@ -1,0 +1,665 @@
+
+===== PAGINA 1 =====
+
+Laboratorio 3: Publish & Subscribe
+Sistema Event-Driven para Ingesta y Agregaci´ on de Eventos
+Departamento de Ingenier´ ıa Inform´ atica
+Universidad de Santiago de Chile
+Prof. Miguel C´ arcamo
+Semestre 2-2025
+1. Objetivos Pedag´ ogicos
+Al finalizar este laboratorio, los estudiantes ser´ an capaces de:
+Dise˜ nar e implementar sistemas event-driven usando patrones publish-subscribe
+Comprender y aplicar sem´ anticas de entrega (at-least-once) en sistemas distribuidos
+Implementar mecanismos de idempotencia y deduplicaci´ on de eventos
+Manejar eventos duplicados y fuera de orden (out-of-order) en pipelines de proce-
+samiento
+Dise˜ nar estrategias de backpressure y retries con pol´ ıticas definidas
+Implementar tolerancia a fallas en sistemas pub-sub (recuperaci´ on de consumidores
+y brokers)
+Demostrar capacidades de replay y re-procesamiento seg´ un la tecnolog´ ıa elegida
+Implementar observabilidad m´ ınima: logs estructurados y m´ etricas (throughput,
+error rate, lag/backlog)
+Comparar diferentes tecnolog´ ıas pub-sub (Kafka, RabbitMQ, MQTT, NATS JetS-
+tream, Redis Streams) resolviendo el mismo problema
+Aplicar buenas pr´ acticas de DevOps: contenedores, CI/CD, y reproducibilidad
+2. Contexto del Curso y Log´ ıstica
+2.1. Organizaci´ on
+N´ umero de estudiantes:20 estudiantes
+Formaci´ on de grupos:5 grupos de 4 integrantes
+Duraci´ on del laboratorio:Aproximadamente 1 mes (4 semanas)
+Modalidad:Cada grupo implementa el mismo problema usando una tecnolog´ ıa
+diferente
+1
+
+===== PAGINA 2 =====
+
+2.2. Elecci´ on de Tecnolog´ ıas
+Cada grupo debe elegir una de las siguientes tecnolog´ ıas pub-sub:
+1.Kafka o Redpanda(Kafka-compatible)
+2.RabbitMQ
+3.MQTT(Mosquitto)
+4.NATS JetStream
+5.Redis Streams
+Importante:
+Cada grupo debe comunicar su elecci´ on de tecnolog´ ıa al profesor lo antes posible a
+trav´ es de Google Classroom.
+Se recomienda que los grupos no repitan tecnolog´ ıas para permitir comparaci´ on
+entre diferentes soluciones.
+Todas las tecnolog´ ıas deben resolver el mismo problema y cumplir los mismos re-
+quisitos funcionales para permitir comparaci´ on entre grupos.
+2.3. Lenguaje de Programaci´ on
+Sugerido:Python (por simplicidad y ecosistema)
+Alternativas permitidas:Go, Java (si el grupo lo prefiere)
+Requisito:El lenguaje debe tener clientes maduros para la tecnolog´ ıa pub-sub
+elegida
+2.4. Entrega
+Plataforma:Repositorio Git (GitLab o GitHub)
+Requisito:CI/CD configurado (al menos compilaci´ on/validaci´ on b´ asica)
+Formato:Repositorio p´ ublico o privado con acceso para el profesor
+3. Descripci´ on del Problema
+3.1. Contexto del Sistema
+Se requiere desarrollar unsistema event-drivenpara el procesamiento de eventos
+de un pa´ ıs ficticio (denominado “Pa´ ıs X”). El sistema debe manejar datos sint´ eticos y
+neutrales, sin referencias a pa´ ıses o situaciones reales.
+Prop´ osito del sistema:El sistema est´ a dise˜ nado para dar cuenta del estado de de-
+lincuencia y seguridad de diferentes zonas o regiones de un pa´ ıs. A trav´ es de la recolecci´ on,
+procesamiento y agregaci´ on de informaci´ on sobre delincuencia, victimizaci´ on y migraci´ on,
+2
+
+===== PAGINA 3 =====
+
+el sistema permite generar m´ etricas y an´ alisis que contribuyen a la comprensi´ on de los
+patrones de seguridad en diferentes ´ areas geogr´ aficas.
+El sistema generar´ a y procesar´ a tres tipos de eventos de forma aleatoria y continua-
+mente:
+Delitos(security.incident): Eventos relacionados con actos delictuales reporta-
+dos en diferentes regiones
+Encuestas de victimizaci´ on(survey.victimization): Respuestas de encuestas
+sobre experiencias de victimizaci´ on de la poblaci´ on
+Casos de migraci´ on(migration.case): Casos relacionados con procesos migra-
+torios que pueden estar asociados a factores de seguridad
+Estos eventos, una vez procesados y agregados, permiten generar m´ etricas diarias por
+regi´ on que reflejan el estado de seguridad y delincuencia de cada zona, facilitando la toma
+de decisiones y el an´ alisis de tendencias.
+3.2. Flujo del Sistema
+El sistema debe implementar el siguiente pipeline:
+1.Generaci´ on/Publicaci´ on:Un generador crea eventos sint´ eticos y los publica en
+los t´ opicos correspondientes
+2.Validaci´ on:Un validador consume eventos, valida su esquema, y env´ ıa eventos
+inv´ alidos a una cola de deadletter
+3.Agregaci´ on:Un agregador consume eventos v´ alidos, los deduplica, agrega por ven-
+tanas diarias por regi´ on, y publica m´ etricas
+4.Auditor´ ıa:Un servicio de auditor´ ıa que persiste la trazabilidad de eventos (qu´ e
+eventos de entrada contribuyeron a qu´ e m´ etricas de salida)
+5.Visualizaci´ on:Una API o dashboard m´ ınimo permite consultar m´ etricas agregadas
+3.3. Arquitectura M´ ınima
+El sistema debe implementarse siguiendo una arquitectura de microservicios, donde
+cada servicio principal debe ejecutarse en un contenedor Docker separado. Esta separaci´ on
+permite:
+Distribuci´ on real:Demostrar que el sistema es verdaderamente distribuido
+Tolerancia a fallas:Poder matar servicios individuales para probar recuperaci´ on
+Escalabilidad:Escalar servicios independientemente seg´ un necesidad
+Aislamiento:Cada servicio puede fallar sin afectar a los dem´ as
+Requisitos de contenedores:
+3
+
+===== PAGINA 4 =====
+
+Servicios obligatorios separados:Los siguientes servicios deben estar en conte-
+nedores distintos:
+1.Publisher/Generator
+2.Validator
+3.Aggregator
+4.Audit/Trazabilidad
+5.Metrics API/Dashboard
+Broker pub-sub:Debe estar en su propio contenedor (Kafka, RabbitMQ, Mos-
+quitto, NATS, Redis seg´ un tecnolog´ ıa elegida)
+Base de datos:Si se usa PostgreSQL, debe estar en contenedor separado. SQLite
+puede estar en el mismo contenedor que Audit/Trazabilidad
+Orquestaci´ on:Todos los servicios deben levantarse condocker compose up
+Comunicaci´ on:Los servicios deben comunicarse a trav´ es de la red de Docker
+(usando nombres de servicio de docker-compose)
+Nota:Si un grupo necesita combinar algunos servicios menores por razones t´ ecnicas
+v´ alidas, debe justificarlo en el README. Sin embargo, los 5 servicios principales deben
+estar separados.
+La arquitectura m´ ınima del sistema es:
+4
+
+===== PAGINA 5 =====
+
+Sistema Event-Driven (Pa´ ıs X - Sint´ etico)
+Publisher/
+Generator
+security.
+incident
+survey.
+victimization migration.
+case
+Broker
+Pub-Sub
+Validatordeadletter.
+validation
+Aggregatordeadletter.
+processing
+metrics.
+daily
+Audit/
+Trazabilidad
+Metrics
+API/
+Dashboard
+alerts.
+anomaly
+(BONUS)
+consume
+invalidos
+validos
+errores m´ etricas
+Leyenda:
+Servicios (microservicios en contenedores)
+T´ opicos/Streams del broker
+Deadletter queues
+Broker pub-sub
+Funcionalidad bonus
+5
+
+===== PAGINA 6 =====
+
+4. Especificaci´ on de T´ opicos
+4.1. T´ opicos Obligatorios
+El sistema debe implementar los siguientes t´ opicos:
+1.security.incident- Eventos de delitos reportados
+2.survey.victimization- Eventos de encuestas de victimizaci´ on
+3.migration.case- Eventos de casos de migraci´ on
+4.metrics.daily- M´ etricas agregadas diarias por regi´ on
+5.deadletter.validation- Eventos que fallaron validaci´ on de esquema
+6.deadletter.processing- Eventos que fallaron durante el procesamiento
+7.alerts.anomaly- (BONUS) Alertas de anomal´ ıas detectadas
+4.2. Formato de Eventos
+Todos los eventos deben seguir el siguiente esquema JSON m´ ınimo:
+{
+"event_id": "550e8400-e29b-41d4-a716-446655440000",
+"timestamp": "2025-01-15T10:30:00Z",
+"region": "norte",
+"source": "security.incident",
+"schema_version": "1.0",
+"correlation_id": "corr-12345",
+"payload": {
+// Contenido espec´ ıfico del tipo de evento
+}
+}
+4.2.1. Campos Obligatorios
+event id: UUID v4 ´ unico para cada evento
+timestamp: ISO-8601 con timezone (UTC)
+region: String identificando la regi´ on (ej: “norte”, “sur”, “centro”, “este”, “oeste”)
+source: Tipo de evento (debe coincidir con el t´ opico)
+schema version: Versi´ on del esquema (string semver, ej: “1.0”)
+correlation id: ID para correlacionar eventos relacionados (opcional pero reco-
+mendado)
+payload: Objeto JSON con los datos espec´ ıficos del evento
+6
+
+===== PAGINA 7 =====
+
+4.2.2. Ejemplos de Payloads
+security.incident (delitos):
+{
+"event_id": "550e8400-e29b-41d4-a716-446655440000",
+"timestamp": "2025-01-15T10:30:00Z",
+"region": "norte",
+"source": "security.incident",
+"schema_version": "1.0",
+"correlation_id": "corr-12345",
+"payload": {
+"crime_type": "theft",
+"severity": "medium",
+"location": {
+"latitude": -33.4489,
+"longitude": -70.6693
+},
+"reported_by": "citizen"
+}
+}
+survey.victimization:
+{
+"event_id": "660e8400-e29b-41d4-a716-446655440001",
+"timestamp": "2025-01-15T11:00:00Z",
+"region": "sur",
+"source": "survey.victimization",
+"schema_version": "1.0",
+"correlation_id": "corr-12346",
+"payload": {
+"survey_id": "survey-2025-001",
+"respondent_age": 35,
+"victimization_type": "property_crime",
+"incident_date": "2025-01-10",
+"reported": true
+}
+}
+migration.case:
+{
+"event_id": "770e8400-e29b-41d4-a716-446655440002",
+"timestamp": "2025-01-15T11:30:00Z",
+"region": "centro",
+"source": "migration.case",
+7
+
+===== PAGINA 8 =====
+
+"schema_version": "1.0",
+"correlation_id": "corr-12347",
+"payload": {
+"case_id": "mig-2025-001",
+"case_type": "asylum",
+"status": "pending",
+"origin_country": "country-x",
+"application_date": "2025-01-01"
+}
+}
+5. Servicios M´ ınimos Requeridos
+5.1. 1. Publisher/Generator
+Funci´ on:Genera eventos sint´ eticos y los publica en los t´ opicos correspondientes
+Modos de operaci´ on:
+•Normal:Genera eventos a tasa constante configurable
+•Burst:Genera picos de eventos (´ util para pruebas de backpressure, es decir,
+cuando el sistema debe regular el flujo porque los consumidores no pueden
+procesar eventos tan r´ apido como se publican)
+•Duplicados controlados:Inyecta eventos duplicados (mismoevent id) para
+probar deduplicaci´ on
+•Out-of-order:Publica eventos con timestamps fuera de orden para probar
+ordenamiento
+Reproducibilidad:Debe soportar un par´ ametro--seedpara generar eventos re-
+producibles
+Configuraci´ on:Tasa de eventos, distribuci´ on de regiones, tipos de eventos
+5.2. 2. Validator
+Funci´ on:Consume eventos de los t´ opicos de entrada, valida el esquema JSON, y
+publica eventos v´ alidos o los env´ ıa a deadletter
+Validaci´ on:
+•Verificar presencia de campos obligatorios
+•Validar formato de UUID enevent id
+•Validar formato ISO-8601 entimestamp
+•Validar quesourcecoincida con el t´ opico
+•Validar estructura delpayloadseg´ un el tipo de evento
+8
+
+===== PAGINA 9 =====
+
+Deadletter:Eventos inv´ alidos deben publicarse endeadletter.validationcon
+informaci´ on del error
+Idempotencia:Debe manejar eventos duplicados correctamente
+5.3. 3. Aggregator
+Funci´ on:Consume eventos v´ alidos, los deduplica poreventid, agrega por venta-
+nas diarias por regi´ on, y publica m´ etricas
+Deduplicaci´ on:Mantener un registro deevent idprocesados (ventana deslizante
+o TTL)
+Agregaci´ on:
+•Ventanas diarias por regi´ on (UTC)
+•Contar eventos por tipo y regi´ on
+•Calcular m´ etricas b´ asicas (promedios, totales)
+Publicaci´ on:Publica m´ etricas agregadas enmetrics.dailyal finalizar cada d´ ıa
+Manejo de errores:Eventos que fallan durante el procesamiento van adeadletter.processing
+5.4. 4. Audit/Trazabilidad
+Funci´ on:Persiste la trazabilidad de eventos (qu´ e eventos de entrada contribuyeron
+a qu´ e m´ etricas de salida)
+Almacenamiento:SQLite (desarrollo) o PostgreSQL (producci´ on)
+Esquema m´ ınimo:
+•Tabla de eventos de entrada (event id, timestamp, region, source, payload)
+•Tabla de m´ etricas de salida (metric id, date, region, metrics)
+•Tabla de trazabilidad (event id, metric id, contribution type)
+Consultas:Debe permitir consultar qu´ e eventos contribuyeron a una m´ etrica es-
+pec´ ıfica
+5.5. 5. Metrics API / Dashboard
+Funci´ on:Expone m´ etricas agregadas para consulta
+Implementaci´ on m´ ınima:
+•Endpoint REST/metricsque retorna m´ etricas en JSON
+•Filtros por regi´ on, fecha, tipo de evento
+•Alternativa: Exportar a archivo o base de datos consultable
+Formato de respuesta:
+9
+
+===== PAGINA 10 =====
+
+{
+"date": "2025-01-15",
+"region": "norte",
+"metrics": {
+"security.incident": {
+"count": 150,
+"by_severity": {
+"low": 50,
+"medium": 80,
+"high": 20
+},
+"by_crime_type": {
+"theft": 60,
+"assault": 40,
+"burglary": 30,
+"other": 20
+}
+},
+"survey.victimization": {
+"count": 200,
+"reported_rate": 0.65
+},
+"migration.case": {
+"count": 75,
+"by_status": {
+"pending": 30,
+"approved": 25,
+"rejected": 20
+}
+}
+}
+}
+6. Requisitos No Negociables
+Los siguientes requisitos son obligatorios y deben demostrarse durante la evaluaci´ on:
+6.1. Checklist de Requisitos Funcionales
+RF1: Delivery at-least-once end-to-end:El sistema debe garantizar que cada evento
+v´ alido se procese al menos una vez, desde la publicaci´ on hasta la m´ etrica final
+RF2: Idempotencia y deduplicaci´ on:El agregador debe detectar y eliminar eventos
+duplicados (mismoevent id) antes de agregar
+RF3: Backpressure y retries:El sistema debe implementar:
+10
+
+===== PAGINA 11 =====
+
+Pol´ ıtica de retry configurable:Cuando un evento falla al ser procesado
+(por ejemplo, error de validaci´ on o fallo temporal del consumidor), el sistema
+debe reintentar su procesamiento. La pol´ ıtica debe ser configurable y puede
+incluir:
+•Estrategia de backoff:Define c´ omo aumenta el tiempo de espera entre
+reintentos:
+◦Exponencial:El tiempo de espera se duplica en cada intento (ej: 1s,
+2s, 4s, 8s, 16s). ´Util cuando el problema puede resolverse con tiempo
+y se quiere evitar sobrecargar el sistema.
+◦Lineal:El tiempo de espera aumenta de forma constante (ej: 1s, 2s,
+3s, 4s, 5s). Balance entre rapidez y carga del sistema.
+◦Fijo:El tiempo de espera es constante entre todos los reintentos (ej: 2s,
+2s, 2s, 2s). M´ as simple pero puede sobrecargar si el problema persiste.
+•N´ umero m´ aximo de reintentos:L´ ımite de intentos antes de enviar el
+evento a deadletter
+•Intervalo inicial:Tiempo base de espera antes del primer reintento
+Manejo de backpressure:Cuando los consumidores no pueden procesar
+eventos tan r´ apido como se publican, el sistema debe detectar esta situaci´ on y
+aplicar mecanismos de regulaci´ on:
+•Detectar acumulaci´ on de eventos en el broker (lag/backlog)
+•Reducir la tasa de publicaci´ on autom´ aticamente o pausar temporalmente
+•Escalar consumidores si es posible (seg´ un la tecnolog´ ıa)
+•Monitorear y alertar sobre situaciones de backpressure
+L´ ımites de reintentos:Despu´ es de alcanzar el n´ umero m´ aximo de reintentos
+configurado, los eventos que siguen fallando deben ser enviados adeadletter.processing
+con informaci´ on del error y n´ umero de intentos realizados
+RF4: Tolerancia a fallas:Durante la demo, deben:
+Matar un consumidor (validator o aggregator) y mostrar recuperaci´ on au-
+tom´ atica
+Reiniciar el broker y mostrar que el sistema contin´ ua procesando eventos
+Demostrar que no se pierden eventos durante las fallas
+RF5: Replay:Deben demostrar capacidad de re-procesamiento:
+Reprocesar eventos desde un punto en el tiempo espec´ ıfico
+Reprocesar eventos desde un offset/posici´ on espec´ ıfica
+La implementaci´ on depende de la tecnolog´ ıa (Kafka: offsets, RabbitMQ: re-
+queue, etc.)
+RF6: Observabilidad m´ ınima:
+Logs estructurados (JSON) con niveles apropiados
+M´ etricas expuestas: throughput (eventos/segundo), error rate (errores/segundo),
+lag/backlog (eventos pendientes)
+11
+
+===== PAGINA 12 =====
+
+Las m´ etricas pueden exportarse a archivo, base de datos, o endpoint HTTP
+RF7: Reproducibilidad:
+docker compose updebe levantar todo el sistema
+Scriptmake demo(o equivalente) debe ejecutar una demostraci´ on completa
+El generador debe soportar--seedpara reproducibilidad
+RF8: Runtime de demo:La demostraci´ on completa debe ejecutarse en≤8 minutos en
+una m´ aquina est´ andar
+RF9: Datos sint´ eticos:No usar datos reales ni sensibles; solo datos sint´ eticos generados
+6.2. Requisitos T´ ecnicos
+RT1: Contenedores:Los siguientes servicios deben estar en contenedores Docker sepa-
+rados:
+Publisher/Generator (1 contenedor)
+Validator (1 contenedor)
+Aggregator (1 contenedor)
+Audit/Trazabilidad (1 contenedor, puede incluir SQLite si se usa)
+Metrics API/Dashboard (1 contenedor)
+Broker pub-sub (1 contenedor: Kafka, RabbitMQ, Mosquitto, NATS, o Redis
+seg´ un tecnolog´ ıa)
+Base de datos PostgreSQL (1 contenedor, solo si se usa PostgreSQL en lugar
+de SQLite)
+Total m´ ınimo:6 contenedores (5 servicios + 1 broker). Si se usa PostgreSQL: 7
+contenedores.
+RT2: Orquestaci´ on:Usardocker-compose.ymlpara orquestar todos los servicios. Los
+servicios deben comunicarse usando los nombres de servicio definidos en docker-
+compose (ej:validator,aggregator, etc.)
+RT3: CI/CD:Repositorio debe tener CI configurado (al menos validaci´ on b´ asica: lint,
+compilaci´ on si aplica)
+RT4: Documentaci´ on:README.md ejecutable con:
+Instrucciones de instalaci´ on y ejecuci´ on
+Descripci´ on de cada servicio
+C´ omo ejecutar la demo
+C´ omo ejecutar tests
+RT5: Schemas:Definir esquemas JSON Schema o Avro para validaci´ on (seg´ un tecno-
+log´ ıa)
+RT6: Scripts:
+12
+
+===== PAGINA 13 =====
+
+run load.sh- Ejecuta carga normal de eventos
+run burst.sh- Ejecuta carga con picos
+run chaos.sh- Ejecuta pruebas de caos (matar servicios, reiniciar broker)
+replay.sh- Demuestra capacidad de replay
+RT7: Tests b´ asicos:Incluir tests unitarios o de integraci´ on b´ asicos (seg´ un el lenguaje)
+7. Cronograma
+El laboratorio tiene una duraci´ on aproximada de 4 semanas. A continuaci´ on se presenta
+un cronograma sugerido con hitos principales:
+7.1. Semana 1: Dise˜ no y Elecci´ on de Tecnolog´ ıa
+Hitos de la Semana 1:
+D´ ıas 1–3:Elecci´ on de tecnolog´ ıa y dise˜ no de arquitectura
+•Investigar y elegir tecnolog´ ıa pub-sub (comunicar elecci´ on al profesor)
+•Revisar documentaci´ on de la tecnolog´ ıa elegida
+•Dise˜ nar esquemas de eventos (JSON Schema)
+•Definir estructura de contenedores y docker-compose
+•Asignar servicios a integrantes del grupo
+D´ ıas 4–5:Configuraci´ on inicial y prototipo
+•Configurar entorno de desarrollo (Docker, dependencias)
+•Crear estructura base del proyecto
+•Implementar prototipo b´ asico del Publisher/Generator
+•Configurar docker-compose inicial
+7.2. Semana 2: Implementaci´ on de Servicios Base
+Hitos de la Semana 2:
+D´ ıas 6–8:Implementaci´ on de servicios principales
+•Implementar Publisher/Generator completo con modo normal
+•Implementar Validator con validaci´ on de esquemas
+•Implementar Aggregator con deduplicaci´ on b´ asica
+•Integrar servicios en docker-compose
+D´ ıas 9–10:Integraci´ on y pruebas iniciales
+•Integrar todos los servicios
+•Probar flujo end-to-end b´ asico
+•Identificar y corregir problemas de integraci´ on
+•Implementar tests b´ asicos
+13
+
+===== PAGINA 14 =====
+
+7.3. Semana 3: Robustez y Funcionalidades Avanzadas
+Hitos de la Semana 3:
+D´ ıas 11–13:Implementaci´ on de requisitos avanzados
+•Implementar backpressure y retries con pol´ ıtica definida
+•Implementar tolerancia a fallas (recuperaci´ on de consumidores)
+•Implementar replay seg´ un tecnolog´ ıa elegida
+•Agregar observabilidad (logs estructurados, m´ etricas)
+D´ ıas 14–15:Modos especiales y casos edge
+•Implementar modo burst del generador
+•Implementar inyecci´ on controlada de duplicados
+•Implementar inyecci´ on de eventos out-of-order
+•Implementar soporte de seed para reproducibilidad
+•Probar tolerancia a fallas del broker
+7.4. Semana 4: Auditor´ ıa, Visualizaci´ on y Entrega
+Hitos de la Semana 4:
+D´ ıas 16–18:Servicios complementarios y scripts
+•Implementar servicio de Audit/Trazabilidad
+•Implementar Metrics API o Dashboard
+•Crear scripts de demo (run load, run burst, run chaos, replay)
+•Implementar bonus de alertas de anomal´ ıas (opcional)
+D´ ıas 19–21:Preparaci´ on de entrega
+•Completar y revisar README.md
+•Preparar y practicar guion de demo (m´ aximo 8 minutos)
+•Revisar y probar todos los entregables
+•Configurar CI/CD si a´ un no est´ a hecho
+•Realizar pruebas finales de reproducibilidad
+Nota:Este cronograma es una gu´ ıa sugerida. Los grupos pueden ajustar el ritmo seg´ un
+sus necesidades, pero deben asegurarse de cumplir con todos los requisitos antes de la fecha
+de entrega.
+14
+
+===== PAGINA 15 =====
+
+8. Entregables
+8.1. Repositorio Git
+El repositorio debe contener:
+docker-compose.yml- Orquestaci´ on de todos los servicios
+README.md- Documentaci´ on ejecutable con instrucciones completas
+Schemas/- Esquemas JSON Schema o Avro para validaci´ on
+Scripts/- Scripts de ejecuci´ on:
+•run load.sh(o equivalente)
+•run burst.sh
+•run chaos.sh
+•replay.sh
+Servicios/- C´ odigo fuente de cada microservicio organizado por servicio
+tests/- Tests b´ asicos (unitarios o de integraci´ on)
+.github/workflows/o.gitlab-ci.yml- Configuraci´ on de CI
+Makefile(opcional pero recomendado) - Comandos comunes comomake demo
+8.2. Demo
+Demo de m´ aximo 8 minutos con guion obligatorio que incluya:
+1.Ingesti´ on (1.5 min):Mostrar generador publicando eventos en modo normal
+2.Validaci´ on (1 min):Mostrar validator procesando eventos y enviando inv´ alidos a
+deadletter
+3.M´ etricas (1.5 min):Mostrar agregador generando m´ etricas diarias y consulta en
+API/Dashboard
+4.Falla inducida (1.5 min):Matar un consumidor y mostrar recuperaci´ on autom´ ati-
+ca
+5.Recuperaci´ on (1 min):Reiniciar broker y mostrar continuidad del procesamiento
+6.Replay (1.5 min):Demostrar re-procesamiento desde un punto espec´ ıfico
+Total: m´ aximo 8 minutos.El guion debe estar documentado en el README o en un
+archivo separado.
+9. R´ ubrica de Evaluaci´ on
+La evaluaci´ on se realizar´ a comparando las implementaciones entre grupos (mismo
+problema, diferentes tecnolog´ ıas). La r´ ubrica es:
+15
+
+===== PAGINA 16 =====
+
+9.1. Correctitud Funcional (25 %)
+Esquemas de eventos:Validaci´ on correcta de esquemas JSON (10 %)
+Ventanas de agregaci´ on:Agregaci´ on correcta por ventanas diarias por regi´ on
+(10 %)
+M´ etricas:C´ alculo correcto de m´ etricas agregadas (5 %)
+9.2. Robustez (25 %)
+Deadletter queues:Manejo correcto de eventos inv´ alidos y fallidos (5 %)
+Retry y backpressure:Pol´ ıtica de retries implementada y funcionando (5 %)
+Tolerancia a fallas:Recuperaci´ on autom´ atica ante fallas de consumidores y broker
+(10 %)
+Idempotencia:Deduplicaci´ on correcta de eventos duplicados (5 %)
+9.3. Distribuci´ on Real (20 %)
+Paralelismo:Uso de consumer groups o equivalentes para paralelizar procesamien-
+to (5 %)
+Escalabilidad:Capacidad de escalar consumidores horizontalmente (5 %)
+Consumer groups:Configuraci´ on correcta de grupos de consumidores (5 %)
+Distribuci´ on:Arquitectura verdaderamente distribuida (no solo localhost) (5 %)
+9.4. Observabilidad (15 %)
+Logs estructurados:Logs en formato JSON con informaci´ on relevante (5 %)
+M´ etricas:Throughput, error rate, lag/backlog expuestos (5 %)
+Monitoreo:Capacidad de monitorear el estado del sistema (5 %)
+9.5. Reproducibilidad (15 %)
+Docker Compose:docker compose upfunciona correctamente (5 %)
+Scripts:Scripts de demo funcionan correctamente (5 %)
+README:Documentaci´ on clara y ejecutable (3 %)
+Seed:Reproducibilidad mediante seed funciona (2 %)
+16
+
+===== PAGINA 17 =====
+
+9.6. Bonus: Alertas de Anomal´ ıas (+10 %)
+Implementaci´ on del t´ opicoalerts.anomalycon:
+Detecci´ on de anomal´ ıas en los datos (ej: picos inusuales, patrones an´ omalos)
+Publicaci´ on de alertas en el t´ opico correspondiente
+Explicaci´ on de la estrategia de detecci´ on en el README o durante la demo
+10. Errores Comunes a Evitar
+10.1. Errores de Dise˜ no
+No implementar at-least-once:Asegurarse de que los consumidores confirmen
+(ack) mensajes solo despu´ es de procesarlos completamente
+Olvidar deduplicaci´ on:El agregador debe mantener un registro deevent id
+procesados
+No manejar out-of-order:Si la tecnolog´ ıa lo permite, considerar ordenamiento
+por timestamp antes de agregar
+Deadletter sin informaci´ on:Los eventos en deadletter deben incluir el error que
+caus´ o el fallo
+10.2. Errores T´ ecnicos
+No usar consumer groups:Asegurarse de configurar grupos de consumidores
+para paralelismo
+No configurar retries:Implementar pol´ ıtica de retries con l´ ımites para evitar
+loops infinitos
+No exponer m´ etricas:El sistema debe permitir monitorear throughput, error
+rate, y lag
+Docker compose incompleto:Todos los servicios deben levantarse con un solo
+comando
+10.3. Errores de Demo
+Demo demasiado larga:Respetar el tiempo m´ aximo de 8 minutos
+No mostrar recuperaci´ on:La demo debe incluir fallas inducidas y recuperaci´ on
+No demostrar replay:Mostrar claramente la capacidad de re-procesamiento
+Falta de guion:Tener un guion claro y practicado antes de la demo
+17
+
+===== PAGINA 18 =====
+
+10.4. Errores de Documentaci´ on
+README incompleto:Debe incluir instrucciones paso a paso para ejecutar el
+sistema
+Falta de schemas:Documentar los esquemas de eventos claramente
+11. Recursos y Referencias
+11.1. Documentaci´ on de Tecnolog´ ıas
+Kafka:https://kafka.apache.org/documentation/
+Redpanda:https://docs.redpanda.com/
+RabbitMQ:https://www.rabbitmq.com/documentation.html
+MQTT (Mosquitto):https://mosquitto.org/documentation/
+NATS JetStream:https://docs.nats.io/nats-concepts/jetstream
+Redis Streams:https://redis.io/docs/data-types/streams/
+11.2. Conceptos Te´ oricos
+Sem´ anticas de entrega: at-least-once, at-most-once, exactly-once
+Idempotencia y deduplicaci´ on en sistemas distribuidos
+Backpressure y rate limiting
+Consumer groups y particionamiento
+Deadletter queues y manejo de errores
+Observabilidad en sistemas distribuidos (logs, m´ etricas, traces)
+11.3. Herramientas ´Utiles
+Docker & Docker Compose:https://docs.docker.com/
+JSON Schema:https://json-schema.org/
+Python clients:kafka-python, pika (RabbitMQ), paho-mqtt, nats-py, redis-py
+Go clients:sarama (Kafka), amqp091-go (RabbitMQ), paho.mqtt.golang, nats.go,
+go-redis
+Java clients:Librer´ ıas oficiales de cada tecnolog´ ıa
+18
+
+===== PAGINA 19 =====
+
+12. Fecha de Entrega
+Fecha l´ ımite:30 de enero de 2026, 23:59 (hora de Chile)
+Formato de entrega:
+Repositorio Git con acceso para el profesor
+Tag o commit espec´ ıfico marcado como entrega final
+Demo programada con el profesor (presencial o remota)
+13. Notas Finales
+Este laboratorio est´ a dise˜ nado para que todos los grupos resuelvan el mismo pro-
+blema, permitiendo comparaci´ on entre tecnolog´ ıas
+La evaluaci´ on considera tanto la correctitud funcional como la robustez y la capa-
+cidad de distribuci´ on real
+Se espera que los estudiantes investiguen las capacidades espec´ ıficas de su tecnolog´ ıa
+elegida
+El bonus de alertas de anomal´ ıas es opcional pero recomendado para grupos que
+busquen destacar
+Ante dudas, consultar con el profesor durante las horas de oficina o por correo
+electr´ onico
+19
