@@ -82,9 +82,6 @@ def dashboard() -> str:
     <head>
         <meta charset='utf-8' />
         <title>Dashboard de Métricas</title>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
-        <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
-        
         <style>
             body { font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; margin: 2rem; background: #f5f5f5; }
             h1 { margin-bottom: 0.5rem; margin-top: 0; }
@@ -104,8 +101,7 @@ def dashboard() -> str:
             button:disabled { opacity: 0.6; cursor: default; }
             
             /* Botones específicos */
-            .btn-pdf { background: #dc2626; } 
-            .btn-html { background: #16a34a; } /* Verde para el nuevo botón */
+            .btn-html { background: #16a34a; } /* Verde para exportar */
             
             table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
             th, td { border: 1px solid #ddd; padding: 0.4rem 0.5rem; text-align: left; font-size: 0.9rem; }
@@ -176,7 +172,6 @@ def dashboard() -> str:
                 </label>
                 <div style="margin-top: 10px;">
                     <button type="submit" id="submit-btn">Consultar</button>
-                    <button type="button" id="export-pdf-btn" class="btn-pdf" style="display:none;" onclick="downloadPDF()">Imprimir PDF (Vista)</button>
                     <button type="button" id="export-html-btn" class="btn-html" style="display:none;">Exportar Todo (HTML)</button>
                 </div>
                 <div id="error" class="error"></div>
@@ -206,7 +201,7 @@ def dashboard() -> str:
         </div>
 
         <script>
-            // --- NUEVO: Manejo del botón HTML ---
+            // --- Manejo del botón HTML ---
             document.getElementById('export-html-btn').addEventListener('click', () => {
                 const date = document.getElementById('date').value;
                 const region = document.getElementById('region').value;
@@ -223,37 +218,6 @@ def dashboard() -> str:
                 // Forzar descarga abriendo en nueva pestaña
                 window.location.href = url;
             });
-
-            // --- PDF Function ---
-            async function downloadPDF() {
-                const { jsPDF } = window.jspdf;
-                const element = document.getElementById('report-container');
-                const btn = document.getElementById('export-pdf-btn');
-                
-                const originalText = btn.innerText;
-                btn.innerText = "Generando...";
-                btn.disabled = true;
-
-                try {
-                    const canvas = await html2canvas(element, { scale: 2 });
-                    const imgData = canvas.toDataURL('image/png');
-                    const pdf = new jsPDF('p', 'mm', 'a4');
-                    const pdfWidth = pdf.internal.pageSize.getWidth();
-                    
-                    const imgProps = pdf.getImageProperties(imgData);
-                    const imgHeight = (imgProps.height * pdfWidth) / imgProps.width;
-                    
-                    pdf.text("Reporte de Métricas - " + document.getElementById('date').value, 10, 10);
-                    pdf.addImage(imgData, 'PNG', 0, 15, pdfWidth, imgHeight);
-                    pdf.save("reporte_metricas.pdf");
-                } catch (err) {
-                    console.error("Error:", err);
-                    alert("Error al generar el PDF");
-                } finally {
-                    btn.innerText = originalText;
-                    btn.disabled = false;
-                }
-            }
 
             // --- Stats Fetching ---
             async function fetchSystemStats() {
@@ -279,7 +243,6 @@ def dashboard() -> str:
             const resultsDiv = document.getElementById('results');
             const errorDiv = document.getElementById('error');
             const submitBtn = document.getElementById('submit-btn');
-            const exportPdfBtn = document.getElementById('export-pdf-btn');
             const exportHtmlBtn = document.getElementById('export-html-btn'); 
             const chartsSection = document.getElementById('charts');
             
@@ -294,7 +257,6 @@ def dashboard() -> str:
                 ev.preventDefault();
                 errorDiv.textContent = '';
                 resultsDiv.innerHTML = '';
-                exportPdfBtn.style.display = 'none';
                 exportHtmlBtn.style.display = 'none';
 
                 const date = dateInput.value;
@@ -316,8 +278,7 @@ def dashboard() -> str:
                     renderResults(data);
                     
                     if (data && data.length > 0) {
-                        exportPdfBtn.style.display = 'inline-block';
-                        exportHtmlBtn.style.display = 'inline-block'; // Mostrar botón nuevo
+                        exportHtmlBtn.style.display = 'inline-block'; // Mostrar botón solo HTML
                     }
 
                 } catch (err) {
@@ -388,17 +349,17 @@ def dashboard() -> str:
                     options: { responsive: true, scales: { y: { beginAtZero: true } } }
                 });
 
-                // --- MODIFICADO: Gráfico de Victimización ahora es LINEA (igual que el export) ---
+                // --- Gráfico de Victimización (LINEA) ---
                 surveyChart = new Chart(document.getElementById('surveyChart').getContext('2d'), {
-                    type: 'line', // Cambiado a LINE
+                    type: 'line', 
                     data: { 
                         labels: regions, 
                         datasets: [{ 
                             label: 'Tasa Reporte (%)', 
                             data: surveyRates, 
-                            borderColor: 'rgba(249, 115, 22, 1)',      // Naranja solido
-                            backgroundColor: 'rgba(249, 115, 22, 0.2)', // Naranja transparente relleno
-                            fill: true // Relleno activado
+                            borderColor: 'rgba(249, 115, 22, 1)',
+                            backgroundColor: 'rgba(249, 115, 22, 0.2)',
+                            fill: true
                         }] 
                     },
                     options: { responsive: true, scales: { y: { beginAtZero: true, max: 100 } } }
