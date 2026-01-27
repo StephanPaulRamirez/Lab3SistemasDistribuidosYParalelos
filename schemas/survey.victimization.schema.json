@@ -1,0 +1,60 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "survey.victimization",
+  "type": "object",
+  "required": [
+    "event_id",
+    "timestamp",
+    "region",
+    "source",
+    "schema_version",
+    "correlation_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "region": {
+      "type": "string",
+      "enum": ["norte", "sur", "centro", "este", "oeste"]
+    },
+    "source": {
+      "type": "string",
+      "const": "survey.victimization"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "survey_id",
+        "respondent_age",
+        "victimization_type",
+        "incident_date",
+        "reported"
+      ],
+      "properties": {
+        "survey_id": {"type": "string"},
+        "respondent_age": {"type": "integer", "minimum": 0},
+        "victimization_type": {
+          "type": "string",
+          "enum": ["property_crime", "violent_crime", "other"]
+        },
+        "incident_date": {"type": "string", "format": "date"},
+        "reported": {"type": "boolean"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

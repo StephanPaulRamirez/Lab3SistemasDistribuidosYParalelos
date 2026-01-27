@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "security.incident",
+  "type": "object",
+  "required": [
+    "event_id",
+    "timestamp",
+    "region",
+    "source",
+    "schema_version",
+    "correlation_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "region": {
+      "type": "string",
+      "enum": ["norte", "sur", "centro", "este", "oeste"]
+    },
+    "source": {
+      "type": "string",
+      "const": "security.incident"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "required": ["crime_type", "severity", "location", "reported_by"],
+      "properties": {
+        "crime_type": {
+          "type": "string",
+          "enum": ["theft", "assault", "burglary", "other"]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["low", "medium", "high"]
+        },
+        "location": {
+          "type": "object",
+          "required": ["latitude", "longitude"],
+          "properties": {
+            "latitude": {"type": "number"},
+            "longitude": {"type": "number"}
+          }
+        },
+        "reported_by": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

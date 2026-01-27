@@ -11,16 +11,53 @@ services:
     build: ./publisher
     depends_on:
       - redis
+    environment:
+      # Configuración del generador de eventos
+      - REDIS_HOST=redis
+      - EVENT_RATE=${PUBLISHER_EVENT_RATE:-5}
+      - BURST_FACTOR=${PUBLISHER_BURST_FACTOR:-5}
+      - MODE=${PUBLISHER_MODE:-normal}
+      - SEED=${PUBLISHER_SEED:-123}
+      # Backpressure
+      - BACKPRESSURE_MAX_INFLIGHT=${BACKPRESSURE_MAX_INFLIGHT:-2000}
+      - BACKPRESSURE_CHECK_EVERY=${BACKPRESSURE_CHECK_EVERY:-50}
+      - BACKPRESSURE_PAUSE_SECONDS=${BACKPRESSURE_PAUSE_SECONDS:-1.0}
 
   validator:
     build: ./validator
     depends_on:
       - redis
+    volumes:
+      - ./schemas:/schemas:ro
+    environment:
+      - REDIS_HOST=redis
+      - VALIDATED_STREAM=validated.events
+      - DEADLETTER_VALIDATION_STREAM=deadletter.validation
+      - VALIDATOR_GROUP=validator
+      - VALIDATOR_NAME=validator-1
+      # Política de retries
+      - RETRY_MAX_ATTEMPTS=${RETRY_MAX_ATTEMPTS:-3}
+      - RETRY_INITIAL_INTERVAL=${RETRY_INITIAL_INTERVAL:-1.0}
+      - RETRY_STRATEGY=${RETRY_STRATEGY:-exponential}
 
   aggregator:
     build: ./aggregator
     depends_on:
       - redis
+    environment:
+      - REDIS_HOST=redis
+      - VALIDATED_STREAM=validated.events
+      - METRICS_STREAM=metrics.daily
+      - DEADLETTER_PROCESSING_STREAM=deadletter.processing
+      - AGGREGATOR_GROUP=${AGGREGATOR_GROUP:-aggregator}
+      - AGGREGATOR_NAME=${AGGREGATOR_NAME:-aggregator-1}
+      - AGGREGATOR_START_ID=${AGGREGATOR_START_ID:-0-0}
+      - DEDUP_SET_KEY=${DEDUP_SET_KEY:-aggregator:processed:event_ids}
+      - DEDUP_TTL_SECONDS=${DEDUP_TTL_SECONDS:-86400}
+      - FLUSH_INTERVAL_SECONDS=${FLUSH_INTERVAL_SECONDS:-30}
+      - RETRY_MAX_ATTEMPTS=${RETRY_MAX_ATTEMPTS:-3}
+      - RETRY_INITIAL_INTERVAL=${RETRY_INITIAL_INTERVAL:-1.0}
+      - RETRY_STRATEGY=${RETRY_STRATEGY:-exponential}
 
   audit:
     build: ./audit
@@ -28,6 +65,11 @@ services:
       - audit-data:/data
     depends_on:
       - redis
+    environment:
+      - REDIS_HOST=redis
+      - VALIDATED_STREAM=validated.events
+      - METRICS_STREAM=metrics.daily
+      - DB_PATH=/data/audit.db
 
   metrics-api:
     build: ./metrics_api
@@ -37,6 +79,8 @@ services:
       - "8000:8000"
     depends_on:
       - audit
+    environment:
+      - DB_PATH=/data/audit.db
 
 volumes:
   audit-data:

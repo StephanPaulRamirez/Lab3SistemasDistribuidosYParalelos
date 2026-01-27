@@ -26,6 +26,14 @@ BURST_FACTOR = int(os.getenv("BURST_FACTOR", "5"))  # multiplicador en modo burs
 MODE = Mode(os.getenv("MODE", Mode.NORMAL))
 SEED = os.getenv("SEED")
 
+# Backpressure configuration (RF3)
+BACKPRESSURE_MAX_INFLIGHT = int(os.getenv("BACKPRESSURE_MAX_INFLIGHT", "2000"))
+BACKPRESSURE_CHECK_EVERY = int(os.getenv("BACKPRESSURE_CHECK_EVERY", "50"))
+BACKPRESSURE_PAUSE_SECONDS = float(os.getenv("BACKPRESSURE_PAUSE_SECONDS", "1.0"))
+
+# Observability configuration
+PUBLISHER_METRICS_LOG_INTERVAL = int(os.getenv("PUBLISHER_METRICS_LOG_INTERVAL", "15"))
+
 
 def _setup_random() -> None:
 	if SEED is not None:
@@ -33,6 +41,17 @@ def _setup_random() -> None:
 			random.seed(int(SEED))
 		except ValueError:
 			random.seed(SEED)
+
+
+def _log_json(level: str, message: str, **extra: Any) -> None:
+	payload = {
+		"ts": datetime.now(timezone.utc).isoformat(),
+		"service": "publisher",
+		"level": level,
+		"message": message,
+		**extra,
+	}
+	print(json.dumps(payload, ensure_ascii=False))
 
 
 def _random_uuid() -> str:
@@ -139,15 +158,35 @@ def generate_events() -> Iterable[Dict[str, Any]]:
 		yield topic, event
 
 
+def _total_inflight(client: redis.Redis) -> int:
+	total = 0
+	for stream in ["security.incident", "survey.victimization", "migration.case"]:
+		try:
+			total += client.xlen(stream)
+		except redis.RedisError:  # noqa: BLE001
+			continue
+	return total
+
+
 def main() -> None:
 	_setup_random()
 	client = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
-	print(f"Publisher connected to Redis at {REDIS_HOST}:{REDIS_PORT}")
-	print(f"Mode={MODE}, rate={EVENT_RATE} ev/s, burst_factor={BURST_FACTOR}, seed={SEED}")
+	_log_json(
+		"info",
+		"publisher_started",
+		redis_host=REDIS_HOST,
+		redis_port=REDIS_PORT,
+		mode=MODE,
+		base_event_rate=EVENT_RATE,
+		burst_factor=BURST_FACTOR,
+		seed=SEED,
+	)
 
 	base_sleep = 1.0 / max(EVENT_RATE, 0.1)
 	duplicate_buffer: List[Dict[str, Any]] = []
+	events_published = 0
+	last_metrics_log = time.time()
 
 	for topic, event in generate_events():
 		# Modo out-of-order: a veces retrocedemos el timestamp unos minutos
@@ -158,8 +197,8 @@ def main() -> None:
 
 		data = json.dumps(event)
 		client.xadd(topic, {"data": data})
-
-		print(f"Published to {topic}: {event['event_id']}")
+		events_published += 1
+		_log_json("debug", "event_published", topic=topic, event_id=event["event_id"])
 
 		# Modo duplicates: guardamos algunos eventos para re-enviarlos
 		if MODE == Mode.DUPLICATES and random.random() < 0.3:
@@ -169,7 +208,21 @@ def main() -> None:
 		if MODE == Mode.DUPLICATES and duplicate_buffer and random.random() < 0.2:
 			dup_topic, dup_event = random.choice(duplicate_buffer)
 			client.xadd(dup_topic, {"data": json.dumps(dup_event)})
-			print(f"Republished duplicate to {dup_topic}: {dup_event['event_id']}")
+			_log_json("debug", "duplicate_republished", topic=dup_topic, event_id=dup_event["event_id"])
+
+		# Backpressure: si hay demasiados mensajes en los streams de entrada,
+		# reducimos temporalmente la tasa de publicación.
+		if events_published % BACKPRESSURE_CHECK_EVERY == 0:
+			total_inflight = _total_inflight(client)
+			if total_inflight > BACKPRESSURE_MAX_INFLIGHT:
+				_log_json(
+					"warning",
+					"backpressure_pause",
+					total_inflight=total_inflight,
+					max_inflight=BACKPRESSURE_MAX_INFLIGHT,
+					pause_seconds=BACKPRESSURE_PAUSE_SECONDS,
+				)
+				time.sleep(BACKPRESSURE_PAUSE_SECONDS)
 
 		# Control de ritmo / burst
 		sleep_time = base_sleep
@@ -177,6 +230,12 @@ def main() -> None:
 			sleep_time /= max(BURST_FACTOR, 1)
 
 		time.sleep(sleep_time)
+
+		now = time.time()
+		if now - last_metrics_log >= PUBLISHER_METRICS_LOG_INTERVAL:
+			_log_json("info", "publisher_runtime_metrics", events_published=events_published)
+			events_published = 0
+			last_metrics_log = now
 
 
 if __name__ == "__main__":

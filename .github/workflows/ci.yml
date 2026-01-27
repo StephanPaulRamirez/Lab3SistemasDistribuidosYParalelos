@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -r publisher/requirements.txt -r validator/requirements.txt -r aggregator/requirements.txt -r audit/requirements.txt -r metrics_api/requirements.txt pytest
+
+      - name: Run tests
+        run: pytest -q
+
+      - name: Validate docker-compose
+        run: docker compose config
+        env:
+          DOCKER_BUILDKIT: 0

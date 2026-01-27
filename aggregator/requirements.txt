@@ -2,3 +2,4 @@ redis
 fastapi
 uvicorn
 pydantic
+jsonschema

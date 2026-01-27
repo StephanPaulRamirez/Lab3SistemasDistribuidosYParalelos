@@ -1,0 +1,57 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "migration.case",
+  "type": "object",
+  "required": [
+    "event_id",
+    "timestamp",
+    "region",
+    "source",
+    "schema_version",
+    "correlation_id",
+    "payload"
+  ],
+  "properties": {
+    "event_id": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "timestamp": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "region": {
+      "type": "string",
+      "enum": ["norte", "sur", "centro", "este", "oeste"]
+    },
+    "source": {
+      "type": "string",
+      "const": "migration.case"
+    },
+    "schema_version": {
+      "type": "string"
+    },
+    "correlation_id": {
+      "type": "string"
+    },
+    "payload": {
+      "type": "object",
+      "required": [
+        "case_id",
+        "case_type",
+        "status",
+        "origin_country",
+        "application_date"
+      ],
+      "properties": {
+        "case_id": {"type": "string"},
+        "case_type": {"type": "string"},
+        "status": {"type": "string", "enum": ["pending", "approved", "rejected"]},
+        "origin_country": {"type": "string"},
+        "application_date": {"type": "string", "format": "date"}
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": false
+}

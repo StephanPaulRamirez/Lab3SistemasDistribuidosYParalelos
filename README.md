@@ -10,11 +10,11 @@ Servicios
 Todos los servicios se ejecutan en contenedores separados y se orquestan con `docker compose`:
 
 - **redis**: Broker pub-sub basado en Redis 7 (Streams).
-- **publisher**: Generador de eventos sintéticos para los tres tópicos de entrada.
-- **validator**: Validador de esquema; separa eventos válidos e inválidos.
-- **aggregator**: Deduplicación y agregación diaria por región; publica métricas.
+- **publisher**: Generador de eventos sintéticos para los tres tópicos de entrada, con soporte de modos *normal*, *burst*, *duplicates* y *out_of_order* y lógica básica de *backpressure* sobre los streams de entrada.
+- **validator**: Validador de esquema; separa eventos válidos e inválidos, con política de reintentos configurables y manejo de mensajes pendientes tras reinicios.
+- **aggregator**: Deduplicación y agregación diaria por región; publica métricas, aplica política de *retries* con *backoff* y procesa mensajes pendientes para mantener la semántica *at-least-once*.
 - **audit**: Persistencia de eventos y métricas en SQLite para trazabilidad.
-- **metrics-api**: API HTTP (FastAPI) para consultar las métricas agregadas.
+- **metrics-api**: API HTTP (FastAPI) para consultar las métricas agregadas y dashboard web mínimo para visualizarlas.
 
 Tópicos / Streams en Redis
 --------------------------
@@ -66,9 +66,9 @@ Flujo de los Servicios
 	 - Usa `XACK` solo después de procesar, cumpliendo semántica *at-least-once*.
 
 3. **Aggregator** (`aggregator/app.py`)
-	 - Consumer group `aggregator` sobre `validated.events`.
+	 - Consumer group `aggregator` sobre `validated.events` (grupo configurable por `AGGREGATOR_GROUP` / `AGGREGATOR_NAME`).
 	 - **Deduplicación**:
-		 - Usa un conjunto en Redis (`aggregator:processed:event_ids`) con TTL (`DEDUP_TTL_SECONDS`, por defecto 86400 s) para evitar procesar dos veces el mismo `event_id`.
+		 - Usa un conjunto en Redis (`DEDUP_SET_KEY`, por defecto `aggregator:processed:event_ids`) con TTL (`DEDUP_TTL_SECONDS`, por defecto 86400 s) para evitar procesar dos veces el mismo `event_id`.
 	 - **Agregación diaria por región**:
 		 - Convierte `timestamp` a fecha UTC (`YYYY‑MM‑DD`).
 		 - Agrupa por `(date, region)` y cuenta eventos por `source` (`security.incident`, `survey.victimization`, `migration.case`).
@@ -85,7 +85,12 @@ Flujo de los Servicios
 				 }
 			 }
 			 ```
-	 - Errores de procesamiento se envían a `deadletter.processing`.
+	 - **Retries y manejo de fallas**:
+		 - Aplica una política de reintentos con *backoff* (estrategia `RETRY_STRATEGY` = `exponential`/`linear`/`fixed`, intentos `RETRY_MAX_ATTEMPTS`, intervalo inicial `RETRY_INITIAL_INTERVAL`).
+		 - Mensajes que exceden el número máximo de reintentos terminan en `deadletter.processing` con información del error.
+	 - **Mensajes pendientes / replay básico**:
+		 - Al iniciar, procesa primero los mensajes pendientes del consumer group usando `XPENDING`/`XCLAIM` antes de consumir nuevos, reforzando la semántica *at-least-once*.
+		 - La variable `AGGREGATOR_START_ID` permite crear un consumer group alternativo que lea desde un ID específico del stream para hacer *replay* (ver script `scripts/replay.sh`).
 
 4. **Audit / Trazabilidad** (`audit/app.py`)
 	 - Usa una base **SQLite** en el volumen compartido `/data/audit.db`.
@@ -102,58 +107,112 @@ Flujo de los Servicios
 	 - API REST construida con **FastAPI**.
 	 - Usa la misma base SQLite `/data/audit.db` que el servicio de Audit.
 	 - Endpoints principales:
-		 - `GET /health`
-			 - Respuesta: `{ "status": "ok" }` si la API está viva.
-		 - `GET /metrics?date=YYYY-MM-DD[&region=...]`
-			 - Consulta la tabla `output_metrics`.
-			 - Filtros:
-				 - `date` (obligatorio).
-				 - `region` (opcional).
-			 - Respuesta: lista de objetos con `date`, `region` y `metrics` (el mismo formato que publica el Aggregator).
+		 - `GET /` – dashboard web mínimo que permite seleccionar fecha y región y visualizar las métricas en una tabla HTML.
+		 - `GET /health` – respuesta `{ "status": "ok" }` si la API está viva.
+		 - `GET /metrics?date=YYYY-MM-DD[&region=...]` – consulta la tabla `output_metrics` y devuelve lista de objetos con `date`, `region` y `metrics` (el mismo formato que publica el Aggregator).
+	 - Toda la API emite logs estructurados JSON para facilitar la observabilidad.
 
-Ejecución
----------
+Ejecución rápida
+----------------
 
 Requisitos previos:
 
 - Docker y Docker Compose instalados (Docker Desktop en Windows).
 
-Pasos:
+### Opción 1: stack normal de laboratorio
 
-1. Desde la raíz del proyecto, construir y levantar todos los servicios:
+Desde la raíz del proyecto:
 
-	 ```bash
-	 docker compose up --build
-	 ```
+```bash
+docker compose up --build
+```
 
-2. Verificar que los servicios estén corriendo: deberías ver logs de `publisher`, `validator`, `aggregator`, `audit` y `metrics-api` procesando eventos.
+Esto levanta todos los servicios con el publisher en modo **normal** (`EVENT_RATE=5`).
 
-3. Probar la API de métricas (mientras `docker compose up` sigue corriendo):
+Una vez que el sistema esté arriba:
 
-	 - Salud:
+- Dashboard en el navegador: <http://localhost:8000/>
+- Salud de la API: `curl http://localhost:8000/health`
+- Consulta de métricas por fecha y región:
 
-		 ```bash
-		 curl http://localhost:8000/health
-		 ```
+```bash
+curl "http://localhost:8000/metrics?date=2025-12-29"
+curl "http://localhost:8000/metrics?date=2025-12-29&region=norte"
+```
 
-	 - Métricas para una fecha dada (ejemplo con la fecha actual):
+### Opción 2: scripts de demo
 
-		 ```bash
-		 curl "http://localhost:8000/metrics?date=2025-12-29"
-		 ```
+En el directorio `scripts/` se incluyen utilidades para los distintos modos del enunciado (pueden ejecutarse desde WSL / Linux):
 
-	 - Métricas filtradas por región:
+- `scripts/run_load.sh`
+	- Levanta todo el stack con el publisher en modo **normal**.
+- `scripts/run_burst.sh`
+	- Reinicia el stack con el publisher en modo **burst** (mayor `EVENT_RATE` y `BURST_FACTOR`) para probar *backpressure* y *retries*.
+- `scripts/run_chaos.sh`
+	- Asume el stack corriendo en otra terminal.
+	- Mata y reinicia `validator` y `aggregator`, y reinicia Redis para demostrar tolerancia a fallas y procesamiento de mensajes pendientes.
+- `scripts/replay.sh [START_ID]`
+	- Crea un aggregator en modo **replay** (nuevo consumer group) que vuelve a procesar `validated.events` desde un ID específico (por defecto `0-0`).
+	- Útil para demostrar *re-procesamiento* por tiempo / offset.
 
-		 ```bash
-		 curl "http://localhost:8000/metrics?date=2025-12-29&region=norte"
-		 ```
+- `scripts/make_demo.sh`
+	- Orquesta una demo completa (~8 minutos) encadenando carga normal, burst y caos.
+	- Pensado para ejecutarse desde WSL / Linux:
 
-Notas y Extensiones
+		```bash
+		./scripts/make_demo.sh
+		```
+
+- `scripts/make_demo.ps1`
+	- Versión equivalente para Windows/PowerShell.
+	- Desde la raíz del repo:
+
+		```powershell
+		powershell -ExecutionPolicy Bypass -File .\scripts\make_demo.ps1
+		```
+
+Observabilidad y métricas
+-------------------------
+
+- Todos los servicios (`publisher`, `validator`, `aggregator`, `audit`, `metrics-api`) emiten **logs estructurados JSON** por stdout, con campos como `service`, `level`, `message`, contadores y lag.
+- Se exponen métricas básicas vía logs:
+	- Throughput aproximado (eventos procesados por ventana de tiempo en publisher/validator/aggregator).
+	- `error_events` y conteo de mensajes enviados a deadletter.
+	- `stream_length` y `pending` para estimar lag/backlog de los streams de entrada.
+
+Tests y CI (RT3, RT7)
+----------------------
+
+- Para ejecutar los tests localmente (requiere Python 3.11):
+
+	- Crear y activar un entorno virtual si se desea.
+	- Instalar dependencias mínimas para tests:
+
+		```bash
+		pip install -r publisher/requirements.txt -r validator/requirements.txt -r aggregator/requirements.txt -r audit/requirements.txt -r metrics_api/requirements.txt pytest
+		```
+
+	- Ejecutar:
+
+		```bash
+		pytest -q
+		```
+
+	- Los tests cubren:
+		- Validación de eventos contra los JSON Schemas usando el servicio validator.
+		- Agregación de métricas en el servicio aggregator (by_severity, by_crime_type, by_status, reported_rate/_reported_true).
+
+- CI/CD mínimo (GitHub Actions):
+
+	- Se incluye un workflow en `.github/workflows/ci.yml` que:
+		- Se ejecuta en cada push y pull request.
+		- Instala dependencias y corre `pytest`.
+		- Valida la configuración de `docker-compose.yml` con `docker compose config`.
+	- Esto cubre el requisito de tener un pipeline de integración continua básico (RT3).
+
+Notas y extensiones
 -------------------
 
-- El sistema ya demuestra el flujo end‑to‑end: generación → validación → agregación → auditoría → consulta.
-- La configuración actual se centra en los requisitos mínimos; se puede extender para:
-	- Implementar scripts de demo (`run_load`, `run_burst`, `run_chaos`, `replay`).
-	- Añadir lógica explícita de *retries* y *backpressure* sobre los consumidores.
-	- Implementar el tópico adicional `alerts.anomaly` para detección de anomalías.
+- El sistema demuestra el flujo end‑to‑end: generación → validación → agregación → auditoría → dashboard.
+- Para trabajo futuro se podría añadir el tópico adicional `alerts.anomaly` para detección de anomalías y completar trazabilidad `event_metric_link`.
 
