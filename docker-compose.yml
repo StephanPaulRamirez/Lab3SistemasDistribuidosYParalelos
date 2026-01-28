@@ -82,5 +82,24 @@ services:
     environment:
       - DB_PATH=/data/audit.db
 
+  anomaly-detector:
+    build: ./anomaly_detector
+    depends_on:
+      - redis
+      - aggregator
+    environment:
+      - REDIS_HOST=redis
+      - METRICS_STREAM=metrics.daily
+      - ALERTS_STREAM=alerts.anomaly
+      - ANOMALY_GROUP=anomaly-detector
+      - ANOMALY_NAME=anomaly-detector-1
+      # Configuración de detección
+      - ANOMALY_ZSCORE_THRESHOLD=${ANOMALY_ZSCORE_THRESHOLD:-2.5}
+      - ANOMALY_WINDOW_SIZE=${ANOMALY_WINDOW_SIZE:-20}
+      - ANOMALY_SPIKE_MULTIPLIER=${ANOMALY_SPIKE_MULTIPLIER:-3.0}
+      # Umbrales de reglas de negocio
+      - THRESHOLD_HIGH_CRIME_COUNT=${THRESHOLD_HIGH_CRIME_COUNT:-100}
+      - THRESHOLD_HIGH_SEVERITY=${THRESHOLD_HIGH_SEVERITY:-0.3}
+
 volumes:
   audit-data:

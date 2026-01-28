@@ -60,7 +60,24 @@ docker compose restart redis
 Write-Host "[make_demo.ps1] Esperando $RecoverySeconds segundos para observar la recuperación..." -ForegroundColor Yellow
 Start-Sleep -Seconds $RecoverySeconds
 
-Write-Host "" 
+Write-Host ""
+Write-Host "[make_demo.ps1] 4) BONUS: Demostrando detección de anomalías..." -ForegroundColor Cyan
+Write-Host "[make_demo.ps1] Inyectando anomalías en métricas para disparar alertas..." -ForegroundColor Yellow
+
+# Inyecta anomalías en modo automático
+python scripts/inject_anomalies.py demo
+
+Write-Host "[make_demo.ps1] ✨ Anomalías inyectadas. Las alertas deberían aparecer en 10 segundos..." -ForegroundColor Green
+Start-Sleep -Seconds 10
+
+Write-Host ""
 Write-Host "[make_demo.ps1] Demo completada." -ForegroundColor Green
-Write-Host "[make_demo.ps1] Abre el dashboard en: http://localhost:8000/"
-Write-Host "[make_demo.ps1] Puedes ver logs en otra terminal con: docker compose logs -f validator aggregator audit"
+Write-Host "[make_demo.ps1] Abre el dashboard en: http://localhost:8000/" -ForegroundColor Cyan
+Write-Host "[make_demo.ps1] Verás:" -ForegroundColor Cyan
+Write-Host "  ✓ Métricas agregadas en tiempo real" -ForegroundColor Green
+Write-Host "  ✓ Comportamiento normal y bajo carga (modo burst)" -ForegroundColor Green
+Write-Host "  ✓ Recuperación ante fallos (caos)" -ForegroundColor Green
+Write-Host "  ✓ 🎁 Alertas de anomalías detectadas (BONUS)" -ForegroundColor Magenta
+Write-Host ""
+Write-Host "[make_demo.ps1] Para ver logs en detalle:" -ForegroundColor Yellow
+Write-Host "  docker compose logs -f anomaly-detector" -ForegroundColor White

@@ -12,8 +12,12 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 # --- NUEVO IMPORT PARA LA EXPORTACIÓN ---
 import pandas as pd
+import redis
 
 DB_PATH = os.getenv("DB_PATH", "audit.db") # Asegurado para local
+REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
+ALERTS_STREAM = os.getenv("ALERTS_STREAM", "alerts.anomaly")
 
 app = FastAPI(title="Metrics API", version="1.0.0")
 
@@ -37,6 +41,10 @@ def log_json(level: str, message: str, **extra: Any) -> None:
 
 def get_connection() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH)
+
+def get_redis_connection() -> redis.Redis:
+    """Retorna una conexión a Redis."""
+    return redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
 # --- Middleware de Monitoreo ---
 class MonitoringMiddleware(BaseHTTPMiddleware):
@@ -197,6 +205,27 @@ def dashboard() -> str:
                 </div>
 
                 <div id="results"></div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h1>🔔 Alertas de Anomalías</h1>
+            <p class="muted">Anomalías detectadas en tiempo real por el Anomaly Detector.</p>
+            <div style="margin-bottom: 1rem;">
+                <label>
+                    Filtrar por severidad (opcional):
+                    <select id="alert-severity-filter">
+                        <option value="">Todas</option>
+                        <option value="critical">Crítica</option>
+                        <option value="high">Alta</option>
+                        <option value="medium">Media</option>
+                    </select>
+                </label>
+            </div>
+            <button type="button" id="refresh-alerts-btn" style="background:#7c3aed;">🔄 Actualizar Alertas</button>
+            <div id="alerts-error" class="error"></div>
+            <div id="alerts-container" style="margin-top: 1rem;">
+                <p class="muted">Cargando alertas...</p>
             </div>
         </div>
 
@@ -365,6 +394,61 @@ def dashboard() -> str:
                     options: { responsive: true, scales: { y: { beginAtZero: true, max: 100 } } }
                 });
             }
+
+            // --- Alerts Management ---
+            const alertsContainer = document.getElementById('alerts-container');
+            const alertsErrorDiv = document.getElementById('alerts-error');
+            const refreshAlertsBtn = document.getElementById('refresh-alerts-btn');
+            const alertSeverityFilter = document.getElementById('alert-severity-filter');
+
+            async function loadAlerts() {
+                alertsErrorDiv.textContent = '';
+                try {
+                    const severity = alertSeverityFilter.value;
+                    let url = '/alerts?limit=50';
+                    if (severity) url += '&severity=' + severity;
+
+                    const resp = await fetch(url);
+                    if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+                    const data = await resp.json();
+                    const alerts = data.alerts || [];
+
+                    if (alerts.length === 0) {
+                        alertsContainer.innerHTML = '<p class="muted">✅ No hay alertas de anomalías. El sistema funciona correctamente.</p>';
+                        return;
+                    }
+
+                    let html = '<table><thead><tr><th>Timestamp</th><th>Región</th><th>Tipo</th><th>Severidad</th><th>Descripción</th><th>Método</th></tr></thead><tbody>';
+                    
+                    for (const alert of alerts) {
+                        const severity = alert.severity || 'unknown';
+                        const severityColor = severity === 'critical' ? '#dc2626' : severity === 'high' ? '#ea580c' : '#f59e0b';
+                        const ts = new Date(alert.timestamp).toLocaleString();
+                        
+                        html += `<tr style="border-left: 4px solid ${severityColor}; background: ${severityColor}22;">
+                            <td>${ts}</td>
+                            <td><strong>${alert.region}</strong></td>
+                            <td><code>${alert.anomaly_type}</code></td>
+                            <td><span class="badge" style="background: ${severityColor}22; color: ${severityColor}; border: 1px solid ${severityColor};">${severity.toUpperCase()}</span></td>
+                            <td>${alert.description}</td>
+                            <td><small>${alert.detection_method}</small></td>
+                        </tr>`;
+                    }
+                    html += '</tbody></table>';
+                    alertsContainer.innerHTML = html;
+                } catch (err) {
+                    alertsErrorDiv.textContent = 'Error al cargar alertas: ' + (err.message || err);
+                    alertsContainer.innerHTML = '';
+                }
+            }
+
+            refreshAlertsBtn.addEventListener('click', loadAlerts);
+            alertSeverityFilter.addEventListener('change', loadAlerts);
+            
+            // Cargar alertas automáticamente al abrir la página
+            loadAlerts();
+            // Actualizar cada 10 segundos
+            setInterval(loadAlerts, 10000);
         </script>
     </body>
 </html>"""
@@ -638,6 +722,55 @@ def get_metric_events(metric_id: int) -> Any:
 
     log_json("info", "metric_events_queried", metric_id=metric_id, count=len(events))
     return JSONResponse(content=events)
+
+
+@app.get("/alerts")
+def get_alerts(
+    limit: int = Query(50, ge=1, le=500),
+    region: str = Query(None),
+    severity: str = Query(None),
+) -> Any:
+    """Obtiene las alertas de anomalías más recientes del stream alerts.anomaly."""
+    try:
+        r = get_redis_connection()
+        
+        # Leer las últimas N alertas del stream
+        messages = r.xrevrange(ALERTS_STREAM, count=limit)
+        
+        alerts: List[Dict[str, Any]] = []
+        for msg_id, msg_data in messages:
+            try:
+                payload = json.loads(msg_data.get("payload", "{}"))
+                
+                # Filtrar por región si se especifica
+                if region and payload.get("region") != region:
+                    continue
+                
+                # Filtrar por severidad si se especifica
+                if severity and payload.get("severity") != severity:
+                    continue
+                
+                alerts.append({
+                    "alert_id": payload.get("alert_id"),
+                    "timestamp": payload.get("timestamp"),
+                    "region": payload.get("region"),
+                    "anomaly_type": payload.get("anomaly_type"),
+                    "severity": payload.get("severity"),
+                    "description": payload.get("description"),
+                    "metric_date": payload.get("metric_date"),
+                    "affected_metrics": json.loads(payload.get("affected_metrics", "{}")),
+                    "detection_method": payload.get("detection_method"),
+                })
+            except Exception as e:
+                log_json("warning", "alert_parsing_error", error=str(e), msg_id=msg_id)
+                continue
+        
+        log_json("info", "alerts_retrieved", count=len(alerts), region=region, severity=severity)
+        return JSONResponse(content={"alerts": alerts, "total": len(alerts)})
+    
+    except Exception as e:
+        log_json("error", "alerts_retrieval_error", error=str(e))
+        raise HTTPException(status_code=500, detail=f"Error al recuperar alertas: {str(e)}")
 
 
 if __name__ == "__main__":
