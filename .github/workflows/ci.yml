@@ -18,10 +18,10 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -r publisher/requirements.txt -r validator/requirements.txt -r aggregator/requirements.txt -r audit/requirements.txt -r metrics_api/requirements.txt pytest pytest-cov
+          pip install -r publisher/requirements.txt -r validator/requirements.txt -r aggregator/requirements.txt -r audit/requirements.txt -r metrics_api/requirements.txt pytest pytest-cov httpx
 
       - name: Run tests
-        run: pytest --cov=. --cov-report=term-missing
+        run: python -m pytest --cov=. --cov-report=term-missing
 
       - name: Validate docker-compose
         run: docker compose config
