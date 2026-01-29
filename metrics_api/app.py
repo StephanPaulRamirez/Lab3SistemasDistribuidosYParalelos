@@ -5,23 +5,22 @@ import json
 from datetime import datetime, timezone
 from typing import Any, Dict, List
 
-# --- Imports necesarios para el monitoreo y API ---
+# --- Imports necesarios ---
 from starlette.middleware.base import BaseHTTPMiddleware
 from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import HTMLResponse, JSONResponse
-
-# --- NUEVO IMPORT PARA LA EXPORTACIÓN ---
 import pandas as pd
 import redis
 
-DB_PATH = os.getenv("DB_PATH", "audit.db") # Asegurado para local
-REDIS_HOST = os.getenv("REDIS_HOST", "redis")
+# --- Configuración ---
+DB_PATH = os.getenv("DB_PATH", "audit.db")
+REDIS_HOST = os.getenv("REDIS_HOST", "redis") # Cambiar a localhost si no usas docker
 REDIS_PORT = int(os.getenv("REDIS_PORT", "6379"))
 ALERTS_STREAM = os.getenv("ALERTS_STREAM", "alerts.anomaly")
 
 app = FastAPI(title="Metrics API", version="1.0.0")
 
-# --- Estado global para guardar las métricas en memoria ---
+# --- Estado global ---
 app_state = {
     "total_requests": 0,
     "total_errors": 0,
@@ -29,6 +28,7 @@ app_state = {
     "start_time": time.time()
 }
 
+# --- Utilitarios ---
 def log_json(level: str, message: str, **extra: Any) -> None:
     payload = {
         "ts": datetime.now(timezone.utc).isoformat(),
@@ -43,14 +43,12 @@ def get_connection() -> sqlite3.Connection:
     return sqlite3.connect(DB_PATH)
 
 def get_redis_connection() -> redis.Redis:
-    """Retorna una conexión a Redis."""
     return redis.Redis(host=REDIS_HOST, port=REDIS_PORT, decode_responses=True)
 
-# --- Middleware de Monitoreo ---
+# --- Middleware ---
 class MonitoringMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
         start_time = time.perf_counter()
-        
         try:
             response = await call_next(request)
             status_code = response.status_code
@@ -61,14 +59,11 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
             raise e
         finally:
             process_time_ms = (time.perf_counter() - start_time) * 1000
-            
-            # Actualizar contadores globales
             app_state["total_requests"] += 1
             app_state["total_latency_ms"] += process_time_ms
             if status_code >= 400:
                 app_state["total_errors"] += 1
-
-            # Loguear métrica individual
+            
             log_json(
                 "info", 
                 "request_processed", 
@@ -77,10 +72,11 @@ class MonitoringMiddleware(BaseHTTPMiddleware):
                 status=status_code,
                 lag_ms=round(process_time_ms, 2)
             )
-
         return response
 
 app.add_middleware(MonitoringMiddleware)
+
+# --- Endpoints ---
 
 @app.get("/", response_class=HTMLResponse)
 def dashboard() -> str:
@@ -108,7 +104,6 @@ def dashboard() -> str:
             button { margin-top: 0.75rem; padding: 0.4rem 0.9rem; border: none; border-radius: 4px; background: #2563eb; color: white; cursor: pointer; font-weight: 600; margin-right: 10px; }
             button:disabled { opacity: 0.6; cursor: default; }
             
-            /* Botones específicos */
             .btn-html { background: #16a34a; } /* Verde para exportar */
             
             table { border-collapse: collapse; width: 100%; margin-top: 1rem; }
@@ -517,10 +512,11 @@ def exportar_metrics_html(
 ):
     """
     Genera un reporte HTML completo que incluye:
-    1. Gráficos visuales (usando Chart.js incrustado).
-    2. Tabla de datos detallada.
+    1. Gráficos visuales.
+    2. Tabla de anomalías detectadas (NUEVO).
+    3. Tabla de datos detallada.
     """
-    # 1. Obtener datos de la BD
+    # 1. Obtener datos de la BD (Métricas)
     query = "SELECT date, region, metrics_json FROM output_metrics WHERE date = ?"
     params = [date]
     if region:
@@ -533,17 +529,55 @@ def exportar_metrics_html(
     if not rows:
         return HTMLResponse("<h1>No hay datos para exportar con esos filtros.</h1>")
 
-    # 2. Procesar datos para la Tabla y para los Gráficos simultáneamente
+    # 2. Obtener ALERTAS de Redis para la fecha seleccionada
+    # (Nota: Redis streams son temporales, esto trae las ultimas 1000 y filtra por fecha en Python)
+    try:
+        r = get_redis_connection()
+        messages = r.xrevrange(ALERTS_STREAM, count=1000)
+        anomalies_rows = ""
+        
+        for msg_id, msg_data in messages:
+            payload = json.loads(msg_data.get("payload", "{}"))
+            # Filtro simple por fecha en el string del timestamp o metric_date
+            alert_ts = payload.get("timestamp", "")
+            alert_region = payload.get("region", "")
+            
+            if date in alert_ts: # Coincidencia simple de fecha
+                if region and region != alert_region:
+                    continue
+                
+                sev = payload.get("severity", "info")
+                color = "#dc2626" if sev == "critical" else "#ea580c" if sev == "high" else "#f59e0b"
+                
+                anomalies_rows += f"""
+                <tr style="border-left: 4px solid {color}; background-color: {color}11;">
+                    <td>{payload.get("timestamp")}</td>
+                    <td><strong>{alert_region}</strong></td>
+                    <td><span class="badge" style="color:{color}; border:1px solid {color}">{sev.upper()}</span></td>
+                    <td>{payload.get("anomaly_type")}</td>
+                    <td>{payload.get("description")}</td>
+                </tr>
+                """
+        
+        if not anomalies_rows:
+            anomalies_html = "<p>✅ No se registraron anomalías para esta fecha.</p>"
+        else:
+            anomalies_html = f"""
+            <table>
+                <thead><tr><th>Hora</th><th>Región</th><th>Severidad</th><th>Tipo</th><th>Detalle</th></tr></thead>
+                <tbody>{anomalies_rows}</tbody>
+            </table>
+            """
+            
+    except Exception as e:
+        anomalies_html = f"<p style='color:red'>Error cargando anomalías: {str(e)}</p>"
+
+    # 3. Procesar datos para la Tabla y Gráficos (Tu lógica original)
     table_rows = ""
-    
-    # Acumuladores para los gráficos
-    # Estructura: {'norte': {'sec': 10, 'mig': 5, 'vic_rate_sum': 0.5, 'vic_count': 1}, ...}
     agg_data = {}
 
     for row_date, row_region, metrics_str in rows:
         m = json.loads(metrics_str)
-        
-        # --- Lógica de Tabla ---
         sec = m.get('security.incident', {'count': 0, 'by_severity': {}})
         mig = m.get('migration.case', {'count': 0, 'by_status': {}})
         surv = m.get('survey.victimization', {'count': 0, 'reported_rate': 0})
@@ -562,7 +596,6 @@ def exportar_metrics_html(
         </tr>
         """
 
-        # --- Lógica de Agregación para Gráficos ---
         if row_region not in agg_data:
             agg_data[row_region] = {'sec': 0, 'mig': 0, 'vic_rate': []}
         
@@ -571,20 +604,17 @@ def exportar_metrics_html(
         if surv['count'] > 0:
             agg_data[row_region]['vic_rate'].append(surv['reported_rate'])
 
-    # 3. Preparar listas para Chart.js (JSON serializado)
     chart_labels = list(agg_data.keys())
     chart_sec_data = [d['sec'] for d in agg_data.values()]
     chart_mig_data = [d['mig'] for d in agg_data.values()]
     
-    # Calcular promedio de tasa para el gráfico
     chart_vic_data = []
     for d in agg_data.values():
         rates = d['vic_rate']
         avg = (sum(rates) / len(rates) * 100) if rates else 0
         chart_vic_data.append(round(avg, 1))
 
-    # 4. Construir el HTML final con JS inyectado
-    # Nota: Usamos json.dumps para pasar las listas de Python a JS de forma segura
+    # 4. HTML Final
     full_html = f"""
     <!DOCTYPE html>
     <html lang="es">
@@ -598,15 +628,15 @@ def exportar_metrics_html(
             
             .card {{ background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 4px rgba(0,0,0,0.1); margin-bottom: 20px; }}
             h2 {{ text-align: center; color: #1e293b; }}
+            h3 {{ color: #334155; border-bottom: 2px solid #e2e8f0; padding-bottom: 10px; }}
             
-            /* Grid de gráficos */
             .charts-grid {{ display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 20px; margin-bottom: 30px; }}
             .chart-box {{ background: #fff; padding: 15px; border: 1px solid #e2e8f0; border-radius: 8px; }}
             
-            /* Tabla */
-            table {{ width: 100%; border-collapse: collapse; }}
-            th {{ background: #f8fafc; padding: 12px; text-align: left; border-bottom: 2px solid #e2e8f0; }}
+            table {{ width: 100%; border-collapse: collapse; margin-top: 10px; }}
+            th {{ background: #f8fafc; padding: 12px; text-align: left; border-bottom: 2px solid #e2e8f0; color: #475569; }}
             td {{ padding: 12px; border-bottom: 1px solid #e2e8f0; }}
+            
             .badge {{ padding: 4px 8px; border-radius: 4px; font-weight: bold; font-size: 0.75rem; }}
             .bg-blue {{ background: #dbeafe; color: #1e40af; }}
             .bg-orange {{ background: #ffedd5; color: #9a3412; }}
@@ -618,15 +648,14 @@ def exportar_metrics_html(
             <h2>Reporte Operativo del {date}</h2>
             
             <div class="charts-grid">
-                <div class="card chart-box">
-                    <canvas id="chartSec"></canvas>
-                </div>
-                <div class="card chart-box">
-                    <canvas id="chartMig"></canvas>
-                </div>
-                <div class="card chart-box">
-                    <canvas id="chartVic"></canvas>
-                </div>
+                <div class="card chart-box"><canvas id="chartSec"></canvas></div>
+                <div class="card chart-box"><canvas id="chartMig"></canvas></div>
+                <div class="card chart-box"><canvas id="chartVic"></canvas></div>
+            </div>
+
+            <div class="card" style="border-left: 5px solid #7c3aed;">
+                <h3>🔔 Anomalías Detectadas</h3>
+                {anomalies_html}
             </div>
 
             <div class="card">
@@ -643,42 +672,28 @@ def exportar_metrics_html(
         </div>
 
         <script>
-            // Datos inyectados desde Python
             const labels = {json.dumps(chart_labels)};
             const secData = {json.dumps(chart_sec_data)};
             const migData = {json.dumps(chart_mig_data)};
             const vicData = {json.dumps(chart_vic_data)};
 
-            // Configuración común
             const commonOptions = {{ responsive: true, plugins: {{ legend: {{ position: 'top' }} }} }};
 
-            // 1. Gráfico Seguridad
             new Chart(document.getElementById('chartSec'), {{
                 type: 'bar',
-                data: {{
-                    labels: labels,
-                    datasets: [{{ label: 'Incidentes de Seguridad', data: secData, backgroundColor: 'rgba(59, 130, 246, 0.7)' }}]
-                }},
+                data: {{ labels: labels, datasets: [{{ label: 'Incidentes de Seguridad', data: secData, backgroundColor: 'rgba(59, 130, 246, 0.7)' }}] }},
                 options: commonOptions
             }});
 
-            // 2. Gráfico Migración
             new Chart(document.getElementById('chartMig'), {{
                 type: 'bar',
-                data: {{
-                    labels: labels,
-                    datasets: [{{ label: 'Casos de Migración', data: migData, backgroundColor: 'rgba(16, 185, 129, 0.7)' }}]
-                }},
+                data: {{ labels: labels, datasets: [{{ label: 'Casos de Migración', data: migData, backgroundColor: 'rgba(16, 185, 129, 0.7)' }}] }},
                 options: commonOptions
             }});
 
-            // 3. Gráfico Victimización
             new Chart(document.getElementById('chartVic'), {{
                 type: 'line',
-                data: {{
-                    labels: labels,
-                    datasets: [{{ label: 'Tasa Victimización (%)', data: vicData, borderColor: 'rgba(249, 115, 22, 1)', backgroundColor: 'rgba(249, 115, 22, 0.2)', fill: true }}]
-                }},
+                data: {{ labels: labels, datasets: [{{ label: 'Tasa Victimización (%)', data: vicData, borderColor: 'rgba(249, 115, 22, 1)', backgroundColor: 'rgba(249, 115, 22, 0.2)', fill: true }}] }},
                 options: {{ ...commonOptions, scales: {{ y: {{ beginAtZero: true, max: 100 }} }} }}
             }});
         </script>
@@ -742,23 +757,19 @@ def get_alerts(
             try:
                 payload = json.loads(msg_data.get("payload", "{}"))
                 
-                # Filtrar por región si se especifica
                 if region and payload.get("region") != region:
                     continue
-                
-                # Filtrar por severidad si se especifica
                 if severity and payload.get("severity") != severity:
                     continue
                 
                 alerts.append({
-                    "alert_id": payload.get("alert_id"),
+                    "alert_id": payload.get("alert_id", msg_id),
                     "timestamp": payload.get("timestamp"),
                     "region": payload.get("region"),
                     "anomaly_type": payload.get("anomaly_type"),
                     "severity": payload.get("severity"),
                     "description": payload.get("description"),
                     "metric_date": payload.get("metric_date"),
-                    "affected_metrics": json.loads(payload.get("affected_metrics", "{}")),
                     "detection_method": payload.get("detection_method"),
                 })
             except Exception as e:
@@ -770,7 +781,7 @@ def get_alerts(
     
     except Exception as e:
         log_json("error", "alerts_retrieval_error", error=str(e))
-        raise HTTPException(status_code=500, detail=f"Error al recuperar alertas: {str(e)}")
+        return JSONResponse(content={"alerts": [], "error": "Redis unavailable"}, status_code=503)
 
 
 if __name__ == "__main__":
