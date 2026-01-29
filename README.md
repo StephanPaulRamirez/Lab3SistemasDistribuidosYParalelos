@@ -112,6 +112,23 @@ Flujo de los Servicios
 		 - `GET /metrics?date=YYYY-MM-DD[&region=...]` – consulta la tabla `output_metrics` y devuelve lista de objetos con `date`, `region` y `metrics` (el mismo formato que publica el Aggregator).
 	 - Toda la API emite logs estructurados JSON para facilitar la observabilidad.
 
+6. **Anomaly Detector (BONUS +10%)** (`anomaly_detector/app.py`)
+	 - Consumer group `anomaly-detector` sobre `metrics.daily`.
+	 - Detecta patrones anómalos y publica alertas en `alerts.anomaly`.
+	 
+	 **Estrategias de detección**:
+	 
+	 1. **Z-Score estadístico**: Mantiene ventana histórica de valores por región/métrica (default: 20 puntos). Si un valor se desvía más de 2.5σ de la media, genera alerta de tipo `statistical_outlier`.
+	 
+	 2. **Picos bruscos (Spike Detection)**: Si el valor actual es 3x o más que el promedio histórico, dispara alerta `sudden_spike`. Útil para detectar cambios repentinos.
+	 
+	 3. **Reglas de negocio**:
+		 - `high_crime_rate`: Más de 100 delitos/día en una región.
+		 - `high_severity_crimes`: Más del 30% de delitos con severidad "high" (situación crítica).
+		 - `low_report_rate`: Menos del 30% de víctimas reportan (posible subregistro/intimidación).
+	 
+	 Las alertas incluyen tipo de anomalía, severidad (`critical`/`high`/`medium`), métricas afectadas y método de detección. Configurables vía variables de entorno (`ANOMALY_ZSCORE_THRESHOLD`, `ANOMALY_WINDOW_SIZE`, `ANOMALY_SPIKE_MULTIPLIER`, umbrales de negocio).
+
 Ejecución rápida
 ----------------
 
