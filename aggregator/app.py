@@ -49,7 +49,7 @@ def log_json(level: str, message: str, **extra: Any) -> None:
 		"message": message,
 		**extra,
 	}
-	print(json.dumps(payload, ensure_ascii=False))
+	print(json.dumps(payload, ensure_ascii=False), flush=True)
 
 
 def ensure_group(client: redis.Redis) -> None:

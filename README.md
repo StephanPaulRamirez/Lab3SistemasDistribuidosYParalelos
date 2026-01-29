@@ -254,11 +254,9 @@ Narrativa:
 para ver cómo el sistema la rechaza y la envía a una cola de Deadletter, protegiendo el flujo principal."
 
 Comandos:
-1.  En Terminal A:
-    docker compose logs -f validator
+1.  docker compose logs -f validator
 
-2.  En Terminal B (Acción de sabotaje):
-    docker compose exec redis redis-cli XADD security.incident * data "INVALID_JSON_CONTENT"
+2.  docker compose exec redis redis-cli XADD security.incident * data "INVALID_JSON_CONTENT"
 
 Qué observar (Terminal A):
 - Buscar log rojo/warning: `Validation error` o `Message sent to deadletter`.
@@ -277,6 +275,8 @@ Comandos:
     (Esperar log: `metrics_flushed`, ocurre cada 30 seg)
 
 2.  curl "http://localhost:8000/metrics?date=$(Get-Date -Format 'yyyy-MM-dd')"
+
+3.  Mostrar Dashboard
 
 Qué observar:
 - En logs: "metrics_flushed" muestra que se guardó el snapshot.
@@ -325,10 +325,10 @@ Objetivo: La "máquina del tiempo". Recalcular métricas desde cero.
 
 Narrativa:
 "Finalmente, necesitamos recalcular métricas de hoy por un cambio en la lógica.
-Lanzamos un Aggregator efímero que lee el stream desde el principio ('0-0')."
+Lanzamos un Aggregator efímero que lee el stream desde '0-1'."
 
 Comandos:
-1.  powershell -ExecutionPolicy Bypass -File .\scripts\replay.ps1 -StartId "0-0"
+1.  powershell -ExecutionPolicy Bypass -File .\scripts\replay.ps1 -StartId "0-1"
 
 Qué observar:
 - Logs frenéticos procesando miles de eventos antiguos.
