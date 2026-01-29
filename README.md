@@ -216,3 +216,127 @@ Notas y extensiones
 - El sistema demuestra el flujo end‑to‑end: generación → validación → agregación → auditoría → dashboard.
 - Para trabajo futuro se podría añadir el tópico adicional `alerts.anomaly` para detección de anomalías y completar trazabilidad `event_metric_link`.
 
+
+GUION  - SISTEMAS DISTRIBUIDOS LAB 3
+===============================================
+
+INTRODUCCIÓN (30 seg)
+----------------------
+"Buenos días. Vamos a presentar una arquitectura orientada a eventos usando Redis Streams y Python.
+El sistema procesa reportes de seguridad simulados, los valida, agrega y visualiza en tiempo real."
+
+-------------------------------------------------------------------------------
+PASO 1: INGESTIÓN Y FLUJO NORMAL (1.5 min)
+Objetivo: Demostrar que el sistema levanta y procesa flujo constante.
+
+Narrativa:
+"Iniciamos el stack. Tenemos un 'Publisher' generando eventos de delitos, victimización y migración.
+Estos pasan a Redis y son consumidos por nuestros microservicios."
+
+Comandos:
+1.  docker compose up --build -d
+    (Esperar a que levanten los contenedores)
+
+2.  docker compose logs -f publisher
+
+Qué observar:
+- Verás logs tipo: `{"level": "info", "message": "event_published", ...}`
+- Explicar: "Aquí vemos al Publisher inyectando eventos a una tasa de 5/seg."
+
+(Ctrl+C para salir de logs)
+
+-------------------------------------------------------------------------------
+PASO 2: VALIDACIÓN Y DEADLETTER (1 min)
+Objetivo: Probar que el sistema detecta y aísla datos corruptos (Schema Validation).
+
+Narrativa:
+"El 'Validator' asegura la calidad del dato. Vamos a inyectar basura manualmente en Redis
+para ver cómo el sistema la rechaza y la envía a una cola de Deadletter, protegiendo el flujo principal."
+
+Comandos:
+1.  En Terminal A:
+    docker compose logs -f validator
+
+2.  En Terminal B (Acción de sabotaje):
+    docker compose exec redis redis-cli XADD security.incident * data "INVALID_JSON_CONTENT"
+
+Qué observar (Terminal A):
+- Buscar log rojo/warning: `Validation error` o `Message sent to deadletter`.
+- Explicar: "El validador detectó el JSON inválido y lo movió a 'deadletter.validation' sin detenerse."
+
+-------------------------------------------------------------------------------
+PASO 3: AGREGACIÓN Y VISUALIZACIÓN (1.5 min)
+Objetivo: Ver la transformación de datos en información de negocio (Métricas).
+
+Narrativa:
+"Los eventos válidos llegan al 'Aggregator', que calcula contadores diarios por región.
+Estas métricas se exponen vía API REST."
+
+Comandos:
+1.  docker compose logs -f aggregator
+    (Esperar log: `metrics_flushed`, ocurre cada 30 seg)
+
+2.  curl "http://localhost:8000/metrics?date=$(Get-Date -Format 'yyyy-MM-dd')"
+
+Qué observar:
+- En logs: "metrics_flushed" muestra que se guardó el snapshot.
+- En curl: Un JSON con conteos (`security.incident: 150`, etc.).
+- (Opcional) Mostrar rápidamente el dashboard en http://localhost:8000/
+
+-------------------------------------------------------------------------------
+PASO 4: RESILIENCIA - FALLA INDUCIDA (1.5 min)
+Objetivo: Demostrar que si un servicio muere, no se pierden datos (At-least-once).
+
+Narrativa:
+"¿Qué pasa si el Validador crashea? Redis guarda los mensajes en el Stream.
+Al reiniciar, el servicio debe retomar exactamente donde se quedó."
+
+Comandos:
+1.  docker compose kill validator
+    (Explicar: "Servicio caído. Los eventos se acumulan en Redis, no se pierden.")
+
+2.  docker compose start validator
+
+3.  docker compose logs -f validator
+
+Qué observar:
+- Al arrancar, verás logs procesando mensajes viejos rápidamente (Catch-up).
+- Explicar: "El validador recuperó los mensajes pendientes gracias a los Consumer Groups de Redis."
+
+-------------------------------------------------------------------------------
+PASO 5: TOLERANCIA A FALLOS DE BROKER (1 min)
+Objetivo: Mostrar recuperación ante caída de infraestructura crítica.
+
+Narrativa:
+"Vamos más allá: reiniciamos el propio Broker (Redis). Los servicios intentarán reconectar automáticamente."
+
+Comandos:
+1.  docker compose restart redis
+
+2.  docker compose logs -f aggregator
+
+Qué observar:
+- Logs de `ConnectionError` seguidos de `Connected to Redis`.
+- Explicar: "El sistema implementa lógica de reconexión y backoff exponencial."
+
+-------------------------------------------------------------------------------
+PASO 6: REPLAY - REPROCESAMIENTO HISTÓRICO (1.5 min)
+Objetivo: La "máquina del tiempo". Recalcular métricas desde cero.
+
+Narrativa:
+"Finalmente, necesitamos recalcular métricas de hoy por un cambio en la lógica.
+Lanzamos un Aggregator efímero que lee el stream desde el principio ('0-0')."
+
+Comandos:
+1.  powershell -ExecutionPolicy Bypass -File .\scripts\replay.ps1 -StartId "0-0"
+
+Qué observar:
+- Logs frenéticos procesando miles de eventos antiguos.
+- Explicar: "Estamos procesando todo el historial sin afectar al consumidor principal que sigue en tiempo real."
+
+-------------------------------------------------------------------------------
+CIERRE
+"Con esto demostramos: Ingestión, Calidad de Datos, Observabilidad y Resiliencia."
+
+Limpieza:
+docker compose down
