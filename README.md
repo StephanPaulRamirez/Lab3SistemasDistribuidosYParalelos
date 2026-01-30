@@ -1,5 +1,10 @@
 
 Event-Driven Lab – Python + Redis Streams
+Equipo de Trabajo:
+- Víctor Duarte
+- Stephan Paul
+- Milovan Valenzuela
+- Martin Vera
 =========================================
 
 Este repositorio implementa la arquitectura mínima del **Laboratorio 3: Publish & Subscribe** usando **Redis Streams** como broker pub-sub y una serie de microservicios en Python.
