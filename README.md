@@ -212,7 +212,7 @@ Tests y CI (RT3, RT7)
 	- Ejecutar:
 
 		```bash
-		pytest -q
+		python -m pytest
 		```
 
 	- Los tests cubren:

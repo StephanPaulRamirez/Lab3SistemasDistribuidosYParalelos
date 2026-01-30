@@ -1,4 +1,3 @@
-
 import pytest
 from fastapi.testclient import TestClient
 from unittest.mock import MagicMock, patch
@@ -176,5 +175,4 @@ def test_get_alerts_filtered(mock_get_redis):
 def test_get_alerts_error(mock_get_redis):
     mock_get_redis.side_effect = Exception("Redis Down")
     resp = client.get("/alerts")
-    assert resp.status_code == 500
-
+    assert resp.status_code == 503
